@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>관리비 - 입주민</title>
+
+<!--    &lt;!&ndash; React 18 CDN &ndash;&gt;
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    &lt;!&ndash; JSX 변환 (Babel standalone) &ndash;&gt;
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>-->
+
+    <link rel="stylesheet" href="billing_resident.css" />
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    /* ── 더미 데이터 ───────────────────────────────────────────────── */
+    const MOCK_BILLINGS = [
+        {
+            id: 1, month: "2026-03", label: "2026년 3월 관리비",
+            billing_month: "2026.03", due_date: "2026.03.31",
+            status: "UNPAID", total_amount: 128500, paid_at: null,
+            billing_details: [
+                { item_name: "일반관리비", item_amount: 42000 },
+                { item_name: "청소비",     item_amount: 18000 },
+                { item_name: "전기료",     item_amount: 35500 },
+                { item_name: "수도료",     item_amount: 12200 },
+                { item_name: "난방비",     item_amount: 20800 },
+            ],
+        },
+        {
+            id: 2, month: "2026-02", label: "2026년 2월 관리비",
+            billing_month: "2026.02", due_date: "2026.02.28",
+            status: "UNPAID", total_amount: 119300, paid_at: null,
+            billing_details: [
+                { item_name: "일반관리비", item_amount: 40000 },
+                { item_name: "청소비",     item_amount: 18000 },
+                { item_name: "전기료",     item_amount: 32100 },
+                { item_name: "수도료",     item_amount: 11200 },
+                { item_name: "난방비",     item_amount: 18000 },
+            ],
+        },
+        {
+            id: 3, month: "2026-01", label: "2026년 1월 관리비",
+            billing_month: "2026.01", due_date: "2026.01.31",
+            status: "PAID", total_amount: 122000, paid_at: "2026.01.15",
+            billing_details: [
+                { item_name: "일반관리비", item_amount: 40000 },
+                { item_name: "청소비",     item_amount: 18000 },
+                { item_name: "전기료",     item_amount: 33000 },
+                { item_name: "수도료",     item_amount: 11000 },
+                { item_name: "난방비",     item_amount: 20000 },
+            ],
+        },
+    ];
+
+    const YEARS  = [2026,2025,2024,2023,2022,2021,2020,2019,2018];
+    const MONTHS = ["1월","2월","3월","4월","5월","6월","7월","8월","9월","10월","11월","12월"];
+    const TODAY  = new Date();
+
+    function fmt(n)           { return Number(n).toLocaleString() + "원"; }
+    function isPastDue(dStr)  {
+        const [y,m,d] = dStr.split(".").map(Number);
+        return TODAY > new Date(y, m-1, d);
+    }
+
+    /* ── FilterPanel ───────────────────────────────────────────────── */
+    function FilterPanel({ label, isOpen, onToggle, children }) {
+        const ref = useRef(null);
+        useEffect(() => {
+            function onOutside(e) { if (ref.current && !ref.current.contains(e.target)) onToggle(false); }
+            if (isOpen) document.addEventListener("mousedown", onOutside);
+            return () => document.removeEventListener("mousedown", onOutside);
+        }, [isOpen, onToggle]);
+
+        return (
+            <div className="panel-wrap" ref={ref}>
+                <button className={`filter-btn${isOpen ? " active" : ""}`} onClick={() => onToggle(!isOpen)}>
+                    <span>{label}</span>
+                    <span className="caret">▼</span>
+                </button>
+                {isOpen && <div className="filter-panel">{children}</div>}
+            </div>
+        );
+    }
+
+    /* ── BillingModal ──────────────────────────────────────────────── */
+    function BillingModal({ mode = "resident", billing, previewData, unitInfo, onClose }) {
+        const data = mode === "resident" ? billing : previewData;
+        if (!data) return null;
+
+        const billingMonth = data.billing_month ?? data.month ?? "";
+        const dueDate      = data.due_date ?? "";
+        const totalAmount  = data.total_amount ?? 0;
+        const details      = data.billing_details ?? [];
+        const status       = mode === "resident" ? (data.status ?? "") : null;
+        const paidAt       = mode === "resident" ? (data.paid_at ?? null) : null;
+
+        const periodLabel = billingMonth.replace(".", "년 ").replace(/\.?$/, "월");
+        const subtitle    = unitInfo ? `${periodLabel} · ${unitInfo}` : periodLabel;
+
+        function StatusBox() {
+            if (mode !== "resident") return null;
+            if (status === "PAID") return (
+                <div className="bm-status-box done">
+                    <div className="bm-status-title">납부 완료되었습니다.</div>
+                    {paidAt && <div className="bm-status-sub">납부일: {paidAt}</div>}
+                </div>
+            );
+            if (status === "UNPAID") {
+                return isPastDue(dueDate) ? (
+                    <div className="bm-status-box past">
+                        <div className="bm-status-title">납부기한이 지났습니다.</div>
+                        <div className="bm-status-sub">관리사무소에 문의해 주세요. 📞 02-222-2222</div>
+                    </div>
+                ) : (
+                    <div className="bm-status-box upcoming">
+                        <div className="bm-status-title">납부기한: {dueDate}</div>
+                        <div className="bm-status-sub">기한 내 납부 부탁드립니다.</div>
+                    </div>
+                );
+            }
+            return null;
+        }
+
+        return (
+            <>
+                <div className="bm-overlay" onClick={onClose} />
+                <div className="bm-modal">
+                    <div className="bm-header">
+                        <div>
+                            <div className="bm-title">디지털 고지서</div>
+                            <div className="bm-subtitle">{subtitle}</div>
+                        </div>
+                        <button className="bm-close" onClick={onClose}>✕</button>
+                    </div>
+                    <div className="bm-bill-head">
+                        <div className="bm-bill-title">관리비 고지서</div>
+                        <div className="bm-bill-period">부과월: {billingMonth} · 납부기한: {dueDate}</div>
+                    </div>
+                    <div className="bm-col-hint">item_name</div>
+                    <div className="bm-rows">
+                        {details.map((d, i) => (
+                            <div key={i} className="bm-row">
+                                <span>{d.item_name}</span>
+                                <span>{fmt(d.item_amount)}</span>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="bm-total-row">
+                        <span className="bm-total-label">합계</span>
+                        <span className="bm-total-amount">{fmt(totalAmount)}</span>
+                    </div>
+                    <StatusBox />
+                    {mode === "preview" && (
+                        <div style={{marginTop:"14px", fontSize:"12px", color:"#888", textAlign:"center"}}>
+                            ✱ 입주민에게 보여지는 화면과 동일한 미리보기입니다.
+                        </div>
+                    )}
+                    <div className="bm-footer">
+                        <button className="bm-btn-close" onClick={onClose}>닫기</button>
+                    </div>
+                </div>
+            </>
+        );
+    }
+
+    /* ── BillingPage ───────────────────────────────────────────────── */
+    function BillingPage() {
+        const [billings,       setBillings]       = useState([]);
+        const [visibleCount,   setVisibleCount]   = useState(3);
+        const [selectedBilling, setSelectedBilling] = useState(null);
+        const [selYear,        setSelYear]        = useState(2026);
+        const [selMonth,       setSelMonth]       = useState(null);
+        const [selStatus,      setSelStatus]      = useState("");
+        const [openPanel,      setOpenPanel]      = useState(null);
+
+        // TODO: 실제 연동 시 fetch(`/hometop/api/billing?householdId=...`) 로 교체
+        useEffect(() => { setBillings(MOCK_BILLINGS); }, []);
+
+        const unpaidList   = billings.filter(b => b.status === "UNPAID");
+        const unpaidCount  = unpaidList.length;
+        const latestPaid   = billings
+            .filter(b => b.status === "PAID" && b.paid_at)
+            .sort((a, b) => a.paid_at < b.paid_at ? 1 : -1)[0];
+        const curMonthBill = billings.find(b => {
+            const [y,m] = b.month.split("-").map(Number);
+            return y === TODAY.getFullYear() && m === TODAY.getMonth()+1;
+        });
+
+        const filtered = billings
+            .filter(b => {
+                const [y,m] = b.month.split("-").map(Number);
+                if (selYear !== null && y !== selYear) return false;
+                if (selMonth && m !== selMonth) return false;
+                if (selStatus && b.status !== selStatus) return false;
+                return true;
+            })
+            .sort((a,b) => a.month < b.month ? 1 : -1);
+
+        const shown = filtered.slice(0, visibleCount);
+
+        const toggle = useCallback((name, v) => setOpenPanel(v ? name : null), []);
+
+        const yearLabel   = selYear === null ? "전체" : `${selYear}년`;
+        const monthLabel  = selMonth ? MONTHS[selMonth-1] : "전체 월";
+        const statusLabel = selStatus === "UNPAID" ? "미납" : selStatus === "PAID" ? "납부완료" : "전체 상태";
+
+        return (
+            <div className="bp-page">
+
+                {/* 미납 배너 */}
+                {unpaidCount > 0 && (
+                    <div className="bp-alert">
+                        <div className="bp-alert-icon">!</div>
+                        <div>
+                            <div className="bp-alert-title">
+                                {unpaidList.map(b => b.billing_month).join(", ")} 관리비가 미납 상태입니다.
+                            </div>
+                            <div className="bp-alert-sub">status = UNPAID 기준 · 안내 전용 · 클릭 이동 없음</div>
+                        </div>
+                    </div>
+                )}
+
+                {/* 요약 카드 */}
+                <div className="bp-summary-grid">
+                    <div className="bp-card">
+                        <div className="bp-card-label">이번 달 청구액</div>
+                        <div className="bp-card-value">{curMonthBill ? fmt(curMonthBill.total_amount) : "—"}</div>
+                        <div className="bp-card-sub">{TODAY.getFullYear()}년 {TODAY.getMonth()+1}월</div>
+                    </div>
+                    <div className="bp-card">
+                        <div className="bp-card-label">미납 건수</div>
+                        <div className={`bp-card-value${unpaidCount > 0 ? " warn" : ""}`}>
+                            {unpaidCount > 0 ? `${unpaidCount}건` : "없음"}
+                        </div>
+                        <div className="bp-card-sub">
+                            {unpaidCount > 0 ? unpaidList.map(b => b.billing_month).join(", ") : "모두 납부 완료"}
+                        </div>
+                    </div>
+                    <div className="bp-card">
+                        <div className="bp-card-label">최근 납부일</div>
+                        <div className="bp-card-value md">{latestPaid ? latestPaid.paid_at : "—"}</div>
+                        <div className="bp-card-sub">{latestPaid ? `${latestPaid.billing_month} 완료` : "납부 이력 없음"}</div>
+                    </div>
+                </div>
+
+                {/* 섹션 타이틀 */}
+                <div className="bp-section-title">관리비 내역</div>
+
+                {/* 필터 행 */}
+                <div className="bp-filter-row">
+                    {/* 연도 */}
+                    <FilterPanel label={yearLabel} isOpen={openPanel==="year"} onToggle={v=>toggle("year",v)}>
+                        <div className="chip-grid year-g">
+                            <button className={`chip full${selYear===null?" selected":""}`}
+                                    onClick={() => { setSelYear(null); setOpenPanel(null); setVisibleCount(3); }}>
+                                전체
+                            </button>
+                            {YEARS.map(y => (
+                                <button key={y} className={`chip${y===selYear?" selected":""}`}
+                                        onClick={() => { setSelYear(y); setOpenPanel(null); setVisibleCount(3); }}>
+                                    {y}년
+                                </button>
+                            ))}
+                        </div>
+                    </FilterPanel>
+
+                    {/* 월 */}
+                    <FilterPanel label={monthLabel} isOpen={openPanel==="month"} onToggle={v=>toggle("month",v)}>
+                        <div className="chip-grid month-g">
+                            <button className={`chip full${selMonth===null?" selected":""}`}
+                                    onClick={() => { setSelMonth(null); setOpenPanel(null); setVisibleCount(3); }}>
+                                전체
+                            </button>
+                            {MONTHS.map((m,i) => (
+                                <button key={i} className={`chip${selMonth===i+1?" selected":""}`}
+                                        onClick={() => { setSelMonth(i+1); setOpenPanel(null); setVisibleCount(3); }}>
+                                    {m}
+                                </button>
+                            ))}
+                        </div>
+                    </FilterPanel>
+
+                    {/* 상태 */}
+                    <FilterPanel label={statusLabel} isOpen={openPanel==="status"} onToggle={v=>toggle("status",v)}>
+                        <div className="chip-grid status-g">
+                            {[{val:"",label:"전체"},{val:"UNPAID",label:"미납"},{val:"PAID",label:"납부완료"}].map(o => (
+                                <button key={o.val} className={`chip status-chip${selStatus===o.val?" selected":""}`}
+                                        onClick={() => { setSelStatus(o.val); setOpenPanel(null); setVisibleCount(3); }}>
+                                    {o.label}
+                                </button>
+                            ))}
+                        </div>
+                    </FilterPanel>
+                </div>
+
+                {/* 목록 */}
+                <div className="bp-list">
+                    {shown.length === 0
+                        ? <div className="bp-empty">조회된 관리비 내역이 없습니다.</div>
+                        : shown.map(b => {
+                            const unpaid  = b.status === "UNPAID";
+                            const overdue = unpaid && isPastDue(b.due_date);
+                            return (
+                                <div key={b.id} className={`bp-item${overdue?" overdue":""}`}>
+                                    <div className="bp-item-left">
+                                        <div className="bp-item-month">{b.label}</div>
+                                        <div className={`bp-item-due${unpaid?"":" paid-text"}`}>
+                                            {unpaid ? `납부기한 ${b.due_date}` : `납부일 ${b.paid_at}`}
+                                        </div>
+                                    </div>
+                                    <div className="bp-item-mid">
+                                        <span className={`bp-badge ${unpaid?"unpaid":"paid"}`}>{unpaid?"UNPAID":"PAID"}</span>
+                                        <span className={`bp-amount${unpaid?" unpaid":""}`}>{fmt(b.total_amount)}</span>
+                                    </div>
+                                    <button className={`bp-btn-view ${unpaid?"primary":"secondary"}`}
+                                            onClick={() => setSelectedBilling(b)}>
+                                        고지서 보기
+                                    </button>
+                                </div>
+                            );
+                        })
+                    }
+                </div>
+
+                {/* 더보기 */}
+                {filtered.length > visibleCount && (
+                    <div className="bp-load-more">
+                        <button className="bp-btn-load" onClick={() => setVisibleCount(v => v+3)}>더보기</button>
+                    </div>
+                )}
+
+                {/* 모달 */}
+                {selectedBilling && (
+                    <BillingModal
+                        mode="resident"
+                        billing={selectedBilling}
+                        unitInfo="101동 1204호"
+                        onClose={() => setSelectedBilling(null)}
+                    />
+                )}
+            </div>
+        );
+    }
+
+    /* ── 마운트 ── */
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<BillingPage />);
+</script>
+</body>
+</html>
